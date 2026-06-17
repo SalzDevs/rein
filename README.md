@@ -15,7 +15,7 @@ agent framework currently reinvents.
 ## Install
 
 ```bash
-go get github.com/a49000/rein
+go get github.com/SalzDevs/rein
 ```
 
 Go 1.22 or later.
@@ -28,7 +28,7 @@ import (
     "fmt"
     "time"
 
-    "github.com/a49000/rein"
+    "github.com/SalzDevs/rein"
 )
 
 result, err := rein.Run(ctx, "npm install",
@@ -41,6 +41,9 @@ That is it. `rein.Run` runs the command, captures stdout and stderr,
 returns the exit code, and **kills the entire process tree** if the
 timeout fires. No leaked child processes. No zombie `npm install`s.
 No `npm run dev` hanging forever.
+
+For long-running commands, use `rein.Start` to get a streaming
+`Session` that emits output line-by-line and can be cleanly stopped.
 
 ## Why this exists
 
@@ -58,17 +61,11 @@ to four things:
 
 ## API
 
+### One-shot commands
+
 ```go
-// Run a command to completion or until the timeout.
 func Run(ctx context.Context, command string, opts ...Option) (*Result, error)
 
-// Functional options.
-func WithTimeout(d time.Duration) Option
-func WithGracefulTimeout(d time.Duration) Option
-func WithEnv(env []string) Option
-func WithDir(dir string) Option
-
-// Result is always returned, even on failure. Check Err.
 type Result struct {
     Stdout   string
     Stderr   string
@@ -78,10 +75,82 @@ type Result struct {
 }
 ```
 
-### Shutdown sequence
+### Long-running commands
 
-On timeout or context cancel, `rein` follows the standard Unix
-escalation:
+```go
+func Start(ctx context.Context, command string, opts ...Option) (*Session, error)
+
+type Line struct {
+    Stream string  // "stdout" or "stderr"
+    Text   string
+}
+
+type Session struct { ... }
+
+func (s *Session) Lines() <-chan Line  // closed when process exits
+func (s *Session) Wait() (*Result, error)
+func (s *Session) Done() <-chan struct{}
+func (s *Session) Stop() error          // blocks until process exits
+func (s *Session) PID() int
+```
+
+### Functional options
+
+```go
+func WithTimeout(d time.Duration) Option           // wall-clock cap
+func WithGracefulTimeout(d time.Duration) Option   // SIGTERM → wait → SIGKILL
+func WithIdleTimeout(d time.Duration) Option       // kill on output silence (Start only)
+func WithEnv(env []string) Option                  // nil = inherit
+func WithDir(dir string) Option                    // working directory
+func WithPTY() Option                              // allocate a real pseudo-terminal
+func WithLineBuffer(n int) Option                  // channel buffer for Lines()
+```
+
+## Examples
+
+### Stream a long-running process and stop it on idle
+
+```go
+session, err := rein.Start(ctx, "npm run dev",
+    rein.WithIdleTimeout(2*time.Minute),  // kill if no output for 2 min
+)
+if err != nil { return err }
+
+go func() {
+    for line := range session.Lines() {
+        log.Printf("[%s] %s", line.Stream, line.Text)
+    }
+}()
+
+result, err := session.Wait()  // blocks until process exits
+```
+
+### Stop a process explicitly
+
+```go
+session, _ := rein.Start(ctx, "long-running-task")
+time.Sleep(10 * time.Second)
+session.Stop()  // SIGTERM, wait 5s, then SIGKILL
+```
+
+### Run an interactive command that needs a TTY
+
+```go
+session, err := rein.Start(ctx, "sudo apt update",
+    rein.WithPTY(),  // gives the child a real /dev/pts/N
+)
+if err != nil { return err }
+defer session.Stop()
+
+for line := range session.Lines() {
+    fmt.Println(line.Text)  // sudo's password prompt arrives as a line
+}
+```
+
+## Shutdown sequence
+
+On timeout, idle timeout, context cancel, or `Session.Stop()`, `rein`
+follows the standard Unix escalation:
 
 1. **SIGTERM** is sent to the entire process group.
 2. rein waits up to `GracefulTimeout` (default 5s) for the process
@@ -95,22 +164,24 @@ and write to disk before being killed.
 
 | OS | Status |
 |---|---|
-| Linux | Full support (process groups, SIGTERM, SIGKILL) |
-| macOS | Full support (process groups, SIGTERM, SIGKILL) |
-| Windows | Partial — process group isolation via Job Objects is not yet implemented. SIGTERM/SIGKILL are sent to the leader only; grandchildren may leak. |
+| Linux | Full support (process groups, SIGTERM, SIGKILL, PTY) |
+| macOS | Full support (process groups, SIGTERM, SIGKILL, PTY) |
+| Windows | Partial — process group isolation via Job Objects is not yet implemented. PTY uses ConPTY (not yet wired). SIGTERM/SIGKILL are sent to the leader only; grandchildren may leak. |
 
 ## Roadmap
 
 - [x] `Run()` for one-shot commands
 - [x] Timeouts with graceful shutdown
 - [x] Process group isolation (POSIX)
-- [ ] `Start()` for long-running commands with line-buffered streaming
-- [ ] Idle-timeout (kill on silence)
-- [ ] Real PTY allocation for interactive commands (`sudo`, `ssh-add`, `npm init`)
+- [x] `Start()` for long-running commands with line-buffered streaming
+- [x] Idle timeout (kill on silence)
+- [x] `Stop()` for explicit shutdown
+- [x] Real PTY allocation for interactive commands (POSIX)
 - [ ] CLI binary (`rein run`, `rein exec`)
 - [ ] NDJSON protocol for cross-language use (Python, Node, Rust bindings)
-- [ ] Windows Job Object support
+- [ ] Windows ConPTY + Job Object support
 - [ ] Bounded output buffer with overflow policy
+- [ ] Persistent cross-process state (for long-lived agents)
 
 ## License
 
