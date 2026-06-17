@@ -249,6 +249,114 @@ func TestCLIStart_IdleTimeout(t *testing.T) {
 	}
 }
 
+// execCLIOrSkip runs `rein exec args...` and skips the test if
+// PTY allocation fails (e.g. the pi agent's sandboxed shell).
+func execCLIOrSkip(t *testing.T, args ...string) (string, string, int) {
+	t.Helper()
+	stdout, stderr, code := runCLI(t, args...)
+	if strings.Contains(stdout, "operation not permitted") || strings.Contains(stderr, "operation not permitted") {
+		t.Skipf("PTY not available in this environment")
+	}
+	// If the only output is an error message, skip.
+	if code != 0 && strings.Contains(stdout, `"type":"error"`) {
+		t.Skipf("PTY not available in this environment: %s", stdout)
+	}
+	return stdout, stderr, code
+}
+
+func TestCLIExec_StreamsAndExits(t *testing.T) {
+	stdout, _, _ := execCLIOrSkip(t, "exec", "echo exec-line-1; echo exec-line-2")
+
+	lines := readNDJSONLines(t, stdout)
+	if len(lines) < 4 {
+		t.Fatalf("expected at least 4 messages (started + 2 lines + exit), got %d:\n%s", len(lines), stdout)
+	}
+	if lines[0]["type"] != "started" {
+		t.Errorf("expected first message type=started, got: %v", lines[0]["type"])
+	}
+	var texts []string
+	for _, m := range lines[1:] {
+		if m["type"] == "line" {
+			texts = append(texts, m["text"].(string))
+		}
+	}
+	if len(texts) != 2 {
+		t.Errorf("expected 2 line messages, got %d: %v", len(texts), texts)
+	} else {
+		if texts[0] != "exec-line-1" || texts[1] != "exec-line-2" {
+			t.Errorf("unexpected lines: %v", texts)
+		}
+	}
+	last := lines[len(lines)-1]
+	if last["type"] != "exit" {
+		t.Errorf("expected last message type=exit, got: %v", last["type"])
+	}
+}
+
+func TestCLIExec_StopViaStdin(t *testing.T) {
+	stdout, _, _ := runCLIWithStdin(t, `{"type":"stop"}`+"\n", "exec", "sleep 30")
+
+	// Skip if PTY is not available.
+	if strings.Contains(stdout, "operation not permitted") {
+		t.Skipf("PTY not available in this environment: %s", stdout)
+	}
+
+	lines := readNDJSONLines(t, stdout)
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 messages, got %d:\n%s", len(lines), stdout)
+	}
+	if lines[0]["type"] != "started" {
+		t.Errorf("expected first message type=started, got: %v", lines[0]["type"])
+	}
+	last := lines[len(lines)-1]
+	if last["type"] != "exit" {
+		t.Errorf("expected last message type=exit, got: %v", last["type"])
+	}
+	if last["exit_code"].(float64) == 0 {
+		t.Errorf("expected non-zero exit_code after stop, got: %v", last["exit_code"])
+	}
+}
+
+func TestCLIExec_InputAndResize(t *testing.T) {
+	// `cat` echoes its stdin to stdout. With a PTY, we can write
+	// to its stdin via NDJSON and read the echoed output.
+	stdin := `{"type":"input","text":"hello-from-input\n"}` + "\n" +
+		`{"type":"resize","rows":40,"cols":120}` + "\n" +
+		`{"type":"stop"}` + "\n"
+	stdout, _, _ := runCLIWithStdin(t, stdin, "exec", "cat")
+
+	// Skip if PTY is not available.
+	if strings.Contains(stdout, "operation not permitted") {
+		t.Skipf("PTY not available in this environment: %s", stdout)
+	}
+
+	lines := readNDJSONLines(t, stdout)
+
+	// Find the line message and verify the text.
+	var sawInput bool
+	for _, m := range lines {
+		if m["type"] == "line" {
+			if m["text"] == "hello-from-input" {
+				sawInput = true
+				break
+			}
+		}
+	}
+	if !sawInput {
+		t.Errorf("expected to see 'hello-from-input' as a line, got messages:\n%s", stdout)
+	}
+}
+
+func TestCLIExec_NoCommand(t *testing.T) {
+	_, stderr, code := runCLI(t, "exec")
+	if code == 0 {
+		t.Error("expected non-zero exit when no command is given")
+	}
+	if !strings.Contains(stderr, "Usage:") {
+		t.Errorf("expected usage info in stderr, got: %q", stderr)
+	}
+}
+
 // readNDJSONLines parses newline-delimited JSON from s.
 func readNDJSONLines(t *testing.T, s string) []map[string]any {
 	t.Helper()
