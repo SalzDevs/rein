@@ -204,12 +204,15 @@ func (s *Session) readLines(stream string, r io.Reader) {
 
 // sendLine sends a line to the session's lines channel, applying
 // the configured OverflowPolicy when the channel is full.
+//
+// The initial send must NOT be guarded by `<-s.done`; otherwise a
+// line can be lost in a race where the child exits and `done` is
+// closed in the same scheduler tick that `sendLine` is called.
+// Once we are blocked on overflow, `done` is the only way out.
 func (s *Session) sendLine(line Line) {
 	for {
 		select {
 		case s.lines <- line:
-			return
-		case <-s.done:
 			return
 		default:
 		}

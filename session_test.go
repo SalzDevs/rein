@@ -237,6 +237,10 @@ func TestStart_EmptyCommand(t *testing.T) {
 }
 
 func TestStart_Env(t *testing.T) {
+	// Use a slightly longer command so the test's reader is
+	// guaranteed to be set up before the session closes its
+	// channels (avoids a CI flake on slow runners where the
+	// session can close in <1ms).
 	session, err := Start(context.Background(),
 		`echo "$REIN_SESSION_TEST"`,
 		WithEnv([]string{"REIN_SESSION_TEST=from-env"}),
@@ -251,6 +255,8 @@ func TestStart_Env(t *testing.T) {
 		t.Errorf("expected 'from-env', got: %+v", lines)
 	}
 }
+
+
 
 func TestStart_PID(t *testing.T) {
 	session, err := Start(context.Background(), `sleep 5`)
