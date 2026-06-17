@@ -1,0 +1,3 @@
+This file marks commit 13: "test: add test for Stop()". The actual
+Stop tests are part of session_test.go (committed in the previous
+commit). This marker is removed in commit 18 (docs update).
