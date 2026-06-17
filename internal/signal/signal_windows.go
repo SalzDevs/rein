@@ -30,5 +30,16 @@ func processGroup(cmd *exec.Cmd, sig syscall.Signal) error {
 	} else {
 		exitCode = uint32(sig)
 	}
-	return windows.TerminateProcess(windows.Handle(cmd.Process.Handle()), exitCode)
+	// We use OpenProcess + TerminateProcess rather than the
+	// (*os.Process).Handle() method because the Handle() method
+	// is only available on Go 1.20+; using OpenProcess keeps us
+	// compatible with the older Go versions that some CI
+	// runners are stuck on.
+	pid := uint32(cmd.Process.Pid)
+	handle, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, pid)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(handle)
+	return windows.TerminateProcess(handle, exitCode)
 }
