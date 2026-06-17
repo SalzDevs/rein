@@ -2,7 +2,7 @@
 
 > The shell layer AI agents don't break.
 
-`rein` is a small, single-purpose Go library that runs shell commands the
+`rein` is a small Go library **and CLI** that runs shell commands the
 way AI agents actually need: with timeouts that work, signals that
 propagate, and process trees that get cleaned up when the context is
 cancelled.
@@ -12,7 +12,14 @@ that needs to execute commands — replacing the broken `os/exec`,
 `subprocess.Popen`, and `child_process.spawn` wrappers that every
 agent framework currently reinvents.
 
+Two ways to use it:
+
+1. **As a Go library** (typed, structured, fast)
+2. **As a CLI binary** via NDJSON over stdio (works with any language)
+
 ## Install
+
+### As a Go library
 
 ```bash
 go get github.com/SalzDevs/rein
@@ -20,7 +27,15 @@ go get github.com/SalzDevs/rein
 
 Go 1.22 or later.
 
-## The 5-second pitch
+### As a CLI
+
+```bash
+go install github.com/SalzDevs/rein/cmd/rein@latest
+```
+
+The `rein` binary ends up in `$GOPATH/bin`.
+
+## The 5-second pitch (library)
 
 ```go
 import (
@@ -39,11 +54,26 @@ fmt.Println(result.Stdout)
 
 That is it. `rein.Run` runs the command, captures stdout and stderr,
 returns the exit code, and **kills the entire process tree** if the
-timeout fires. No leaked child processes. No zombie `npm install`s.
-No `npm run dev` hanging forever.
+timeout fires.
 
-For long-running commands, use `rein.Start` to get a streaming
-`Session` that emits output line-by-line and can be cleanly stopped.
+## The 5-second pitch (CLI)
+
+```bash
+$ rein run --timeout 30s "npm install"
+{"type":"exit","exit_code":0,"duration_ms":1234,"stdout":"added 1 package in 2s\n","stderr":""}
+
+$ rein start --idle-timeout 2m "npm run dev"
+{"type":"started","pid":4213}
+{"type":"line","stream":"stdout","text":"> server-ready@1.0.0 dev"}
+{"type":"line","stream":"stdout","text":"> next dev"}
+...
+```
+
+Stop the start command with NDJSON on stdin:
+
+```bash
+$ echo '{"type":"stop"}' | rein start "sleep 30"
+```
 
 ## Why this exists
 
@@ -59,7 +89,7 @@ to four things:
 
 `rein` solves all four with a single API.
 
-## API
+## Library API
 
 ### One-shot commands
 
@@ -87,64 +117,137 @@ type Line struct {
 
 type Session struct { ... }
 
-func (s *Session) Lines() <-chan Line  // closed when process exits
+func (s *Session) Lines() <-chan Line
 func (s *Session) Wait() (*Result, error)
 func (s *Session) Done() <-chan struct{}
-func (s *Session) Stop() error          // blocks until process exits
+func (s *Session) Stop() error
 func (s *Session) PID() int
 ```
 
 ### Functional options
 
 ```go
-func WithTimeout(d time.Duration) Option           // wall-clock cap
-func WithGracefulTimeout(d time.Duration) Option   // SIGTERM → wait → SIGKILL
-func WithIdleTimeout(d time.Duration) Option       // kill on output silence (Start only)
-func WithEnv(env []string) Option                  // nil = inherit
-func WithDir(dir string) Option                    // working directory
-func WithPTY() Option                              // allocate a real pseudo-terminal
-func WithLineBuffer(n int) Option                  // channel buffer for Lines()
+func WithTimeout(d time.Duration) Option
+func WithGracefulTimeout(d time.Duration) Option
+func WithIdleTimeout(d time.Duration) Option   // Start only
+func WithEnv(env []string) Option
+func WithDir(dir string) Option
+func WithPTY() Option                          // POSIX only
+func WithLineBuffer(n int) Option
 ```
 
-## Examples
+## CLI reference
 
-### Stream a long-running process and stop it on idle
+```
+rein <command> [arguments]
 
-```go
-session, err := rein.Start(ctx, "npm run dev",
-    rein.WithIdleTimeout(2*time.Minute),  // kill if no output for 2 min
+Commands:
+  run       Run a command to completion, print the result as NDJSON
+  start     Start a long-running command, stream lines as NDJSON
+  version   Print the version
+  help      Print this help
+```
+
+### `rein run`
+
+```
+rein run [options] <command>
+
+Options:
+  --timeout <duration>          Maximum wall-clock duration (0 = no timeout)
+  --graceful-timeout <duration> Time to wait between SIGTERM and SIGKILL
+  --dir <path>                  Working directory
+  --env <KEY=VALUE>             Environment variable (repeatable)
+  --pty                         Allocate a pseudo-terminal
+
+Output: a single NDJSON line on stdout.
+```
+
+### `rein start`
+
+```
+rein start [options] <command>
+
+Options:
+  --timeout <duration>          Maximum wall-clock duration
+  --graceful-timeout <duration> Time to wait between SIGTERM and SIGKILL
+  --idle-timeout <duration>     Kill the process if no output for this duration
+  --dir <path>                  Working directory
+  --env <KEY=VALUE>             Environment variable (repeatable)
+  --pty                         Allocate a pseudo-terminal
+  --line-buffer <n>             Size of the output channel buffer
+
+Output: NDJSON on stdout, one message per line.
+Control: NDJSON on stdin, one message per line.
+Signals: SIGINT/SIGTERM stop the process.
+```
+
+## NDJSON protocol
+
+The CLI speaks newline-delimited JSON on stdio. Five message types:
+
+### Outgoing (stdout)
+
+| Type | Fields | When |
+|---|---|---|
+| `started` | `pid` | The process is running. |
+| `line` | `stream` (`"stdout"`/`"stderr"`), `text` | Each line of output. |
+| `exit` | `exit_code`, `duration_ms`, `stdout`, `stderr`, `err` | The process has exited. |
+| `error` | `err` | Error before the process started. |
+
+### Incoming (stdin)
+
+| Type | Fields | Effect |
+|---|---|---|
+| `stop` | (none) | Ask rein to stop the running process. |
+
+### Example: Python client
+
+```python
+import subprocess, json
+
+proc = subprocess.Popen(
+    ["rein", "start", "--idle-timeout", "2m", "npm", "run", "dev"],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1,
 )
-if err != nil { return err }
 
-go func() {
-    for line := range session.Lines() {
-        log.Printf("[%s] %s", line.Stream, line.Text)
-    }
-}()
+for line in proc.stdout:
+    msg = json.loads(line)
+    if msg["type"] == "line":
+        print(f"[{msg['stream']}] {msg['text']}")
+    elif msg["type"] == "started":
+        print(f"process started, pid={msg['pid']}")
+    elif msg["type"] == "exit":
+        print(f"process exited, code={msg.get('exit_code')}")
+        break
 
-result, err := session.Wait()  // blocks until process exits
+# Stop the process
+proc.stdin.write(json.dumps({"type": "stop"}) + "\n")
+proc.stdin.flush()
 ```
 
-### Stop a process explicitly
+### Example: Node.js client
 
-```go
-session, _ := rein.Start(ctx, "long-running-task")
-time.Sleep(10 * time.Second)
-session.Stop()  // SIGTERM, wait 5s, then SIGKILL
-```
+```javascript
+const { spawn } = require("child_process");
+const readline = require("readline");
 
-### Run an interactive command that needs a TTY
+const child = spawn("rein", ["start", "npm", "run", "dev"], { stdio: "pipe" });
 
-```go
-session, err := rein.Start(ctx, "sudo apt update",
-    rein.WithPTY(),  // gives the child a real /dev/pts/N
-)
-if err != nil { return err }
-defer session.Stop()
+const rl = readline.createInterface({ input: child.stdout });
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.type === "line") console.log(`[${msg.stream}] ${msg.text}`);
+  if (msg.type === "exit") {
+    console.log(`process exited, code=${msg.exit_code}`);
+    process.exit(msg.exit_code || 0);
+  }
+});
 
-for line := range session.Lines() {
-    fmt.Println(line.Text)  // sudo's password prompt arrives as a line
-}
+// Stop after 30s
+setTimeout(() => {
+  child.stdin.write(JSON.stringify({ type: "stop" }) + "\n");
+}, 30_000);
 ```
 
 ## Shutdown sequence
@@ -164,8 +267,8 @@ and write to disk before being killed.
 
 | OS | Status |
 |---|---|
-| Linux | Full support (process groups, SIGTERM, SIGKILL, PTY) |
-| macOS | Full support (process groups, SIGTERM, SIGKILL, PTY) |
+| Linux | Full support (process groups, SIGTERM, SIGKILL, PTY, CLI) |
+| macOS | Full support (process groups, SIGTERM, SIGKILL, PTY, CLI) |
 | Windows | Partial — process group isolation via Job Objects is not yet implemented. PTY uses ConPTY (not yet wired). SIGTERM/SIGKILL are sent to the leader only; grandchildren may leak. |
 
 ## Roadmap
@@ -177,11 +280,12 @@ and write to disk before being killed.
 - [x] Idle timeout (kill on silence)
 - [x] `Stop()` for explicit shutdown
 - [x] Real PTY allocation for interactive commands (POSIX)
-- [ ] CLI binary (`rein run`, `rein exec`)
-- [ ] NDJSON protocol for cross-language use (Python, Node, Rust bindings)
+- [x] CLI binary (`rein run`, `rein start`)
+- [x] NDJSON protocol for cross-language use
 - [ ] Windows ConPTY + Job Object support
 - [ ] Bounded output buffer with overflow policy
 - [ ] Persistent cross-process state (for long-lived agents)
+- [ ] `rein exec` subcommand for interactive PTY sessions
 
 ## License
 
