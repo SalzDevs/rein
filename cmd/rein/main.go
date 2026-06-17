@@ -21,7 +21,7 @@ import (
 
 // version is set at build time via -ldflags, or falls back to the
 // value below for plain `go build`.
-var version = "0.0.2"
+var version = "0.1.0"
 
 const usageText = `rein - the shell layer AI agents don't break
 
