@@ -57,13 +57,13 @@ type Session struct {
 	// Set by watchIdle if an idle timeout is configured. Nil otherwise.
 	activityCh chan struct{}
 
-	stopOnce   sync.Once
-	mu         sync.Mutex
-	stopped    bool
-	result     *Result
-	err        error
-	drops      uint64
-	readersWg  sync.WaitGroup // incremented by each readLines goroutine
+	stopOnce  sync.Once
+	mu        sync.Mutex
+	stopped   bool
+	result    *Result
+	err       error
+	drops     uint64
+	readersWg sync.WaitGroup // incremented by each readLines goroutine
 }
 
 // Start launches a long-running command and returns a [Session].
