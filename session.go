@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -30,17 +31,26 @@ type Line struct {
 // real-world outputs (e.g. a minified JSON blob, an SVG path).
 const maxLineSize = 16 * 1024 * 1024 // 16 MB
 
-// Session is a handle to a long-running command started by [Start].
+// Session is a handle to a long-running command started by [Start]
+// or [StartExec].
 //
 // A Session streams output line-by-line via [Session.Lines],
 // exposes the process lifecycle via [Session.Done] and
 // [Session.Wait], and can be cleanly stopped via [Session.Stop].
+//
+// If the session was started with a PTY (see [WithPTY]), input
+// can be written to the child's stdin via [Session.Write] and
+// the terminal window can be resized via [Session.Resize].
 type Session struct {
 	cmd             *exec.Cmd
 	lines           chan Line
 	done            chan struct{}
 	gracefulTimeout time.Duration
 	idleTimeout     time.Duration
+
+	// ptyMaster is the master end of the PTY when the session was
+	// started with WithPTY. Nil otherwise. Used by Write and Resize.
+	ptyMaster *os.File
 
 	// activityCh receives non-blocking pings on every line emitted.
 	// Set by watchIdle if an idle timeout is configured. Nil otherwise.
@@ -66,6 +76,10 @@ type Session struct {
 //     to exit on its own.
 //  3. If the process is still running, SIGKILL is sent to the
 //     process group.
+//
+// For non-PTY sessions, the child's stdin is /dev/null. For
+// PTY sessions (see [WithPTY]), the child's stdin is the PTY
+// slave and input can be written via [Session.Write].
 func Start(ctx context.Context, command string, opts ...Option) (*Session, error) {
 	if command == "" {
 		return nil, errors.New("rein: command is empty")
@@ -86,13 +100,15 @@ func Start(ctx context.Context, command string, opts ...Option) (*Session, error
 	procgroup.Apply(cmd)
 
 	var stdoutReader, stderrReader io.Reader
+	var ptyMaster *os.File
 	if options.PTY {
 		// startWithPTY calls cmd.Start() internally (required by
-		// the creack/pty API) and returns the master as a reader.
+		// the creack/pty API) and returns the master as a file.
 		master, err := startWithPTY(cmd)
 		if err != nil {
 			return nil, err
 		}
+		ptyMaster = master
 		// On a real TTY, stderr is merged with stdout.
 		stdoutReader = master
 		stderrReader = nil
@@ -105,9 +121,23 @@ func Start(ctx context.Context, command string, opts ...Option) (*Session, error
 		if err != nil {
 			return nil, fmt.Errorf("rein: failed to get stderr pipe: %w", err)
 		}
+		// For non-PTY sessions, the child should NOT read from
+		// the agent's stdin pipe. We point it at /dev/null so
+		// programs that read stdin (cat, head, etc.) get EOF
+		// immediately rather than reading the agent's control
+		// messages by accident.
+		devNull, err := os.Open(os.DevNull)
+		if err != nil {
+			return nil, fmt.Errorf("rein: failed to open %s: %w", os.DevNull, err)
+		}
+		cmd.Stdin = devNull
 		if err := cmd.Start(); err != nil {
+			devNull.Close()
 			return nil, fmt.Errorf("rein: failed to start: %w", err)
 		}
+		// Child has its own copy of the devNull FD; parent can
+		// close its copy safely.
+		devNull.Close()
 		stdoutReader = sr
 		stderrReader = er
 	}
@@ -122,6 +152,7 @@ func Start(ctx context.Context, command string, opts ...Option) (*Session, error
 		done:            make(chan struct{}),
 		gracefulTimeout: options.GracefulTimeout,
 		idleTimeout:     options.IdleTimeout,
+		ptyMaster:       ptyMaster,
 	}
 	// Initialize the activity channel up-front if an idle timeout
 	// is configured, so the line reader goroutines (started
@@ -303,4 +334,34 @@ func (s *Session) PID() int {
 		return -1
 	}
 	return s.cmd.Process.Pid
+}
+
+// Write sends p to the child's stdin. Only works for sessions
+// started with [WithPTY]; for non-PTY sessions it returns an
+// error.
+//
+// Write is safe to call from any goroutine.
+func (s *Session) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	master := s.ptyMaster
+	s.mu.Unlock()
+	if master == nil {
+		return 0, errors.New("rein: session is not running with a PTY; use WithPTY")
+	}
+	return master.Write(p)
+}
+
+// Resize resizes the PTY window to rows x cols. Only works for
+// sessions started with [WithPTY]; for non-PTY sessions it
+// returns an error.
+//
+// Resize is safe to call from any goroutine.
+func (s *Session) Resize(rows, cols int) error {
+	s.mu.Lock()
+	master := s.ptyMaster
+	s.mu.Unlock()
+	if master == nil {
+		return errors.New("rein: session is not running with a PTY; use WithPTY")
+	}
+	return resizePTY(master, rows, cols)
 }
