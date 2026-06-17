@@ -29,6 +29,29 @@ const (
 
 	// Incoming (PTY only): resize the PTY window to Rows x Cols.
 	TypeResize = "resize"
+
+	// Incoming (daemon only): create a new session.
+	//   ID, Command, Options are set.
+	TypeCreate = "create"
+
+	// Incoming (daemon only): destroy an existing session.
+	//   ID is set.
+	TypeDestroy = "destroy"
+
+	// Incoming (daemon only): list active sessions.
+	TypeList = "list"
+
+	// Outgoing (daemon only): emitted when a session is created.
+	//   ID, PID are set.
+	TypeCreated = "created"
+
+	// Outgoing (daemon only): emitted when a session is destroyed.
+	//   ID, ExitCode are set.
+	TypeDestroyed = "destroyed"
+
+	// Outgoing (daemon only): list of active sessions.
+	//   Sessions is set.
+	TypeSessions = "sessions"
 )
 
 // Message is a single NDJSON frame in the rein protocol.
@@ -44,21 +67,39 @@ const (
 //	Type=input     Text is set; the bytes are written to the
 //	                child's stdin (PTY only).
 //	Type=resize    Rows and Cols are set; the PTY window is resized.
+//	Type=create    ID, Command are set. (daemon only)
+//	Type=destroy   ID is set. (daemon only)
+//	Type=list      (daemon only)
+//
+// Outgoing (daemon only):
+//	Type=created   ID, PID are set.
+//	Type=destroyed ID, ExitCode are set.
+//	Type=sessions  Sessions is a list of {id, pid}.
 //
 // Numeric fields (PID, ExitCode, DurationMS, Rows, Cols) are
 // pointers so a genuine 0 is distinguishable from "field not set".
 // String fields use omitempty (the zero value is the empty string,
 // which we treat as absent).
 type Message struct {
-	Type       string `json:"type"`
-	Stream     string `json:"stream,omitempty"`
-	Text       string `json:"text,omitempty"`
-	PID        *int   `json:"pid,omitempty"`
-	ExitCode   *int   `json:"exit_code,omitempty"`
-	DurationMS *int64 `json:"duration_ms,omitempty"`
-	Err        string `json:"err,omitempty"`
-	Stdout     string `json:"stdout,omitempty"`
-	Stderr     string `json:"stderr,omitempty"`
-	Rows       *int   `json:"rows,omitempty"`
-	Cols       *int   `json:"cols,omitempty"`
+	Type       string         `json:"type"`
+	ID         string         `json:"id,omitempty"`
+	Stream     string         `json:"stream,omitempty"`
+	Text       string         `json:"text,omitempty"`
+	Command    string         `json:"command,omitempty"`
+	PID        *int           `json:"pid,omitempty"`
+	ExitCode   *int           `json:"exit_code,omitempty"`
+	DurationMS *int64         `json:"duration_ms,omitempty"`
+	Err        string         `json:"err,omitempty"`
+	Stdout     string         `json:"stdout,omitempty"`
+	Stderr     string         `json:"stderr,omitempty"`
+	Rows       *int           `json:"rows,omitempty"`
+	Cols       *int           `json:"cols,omitempty"`
+	Sessions   []SessionInfo  `json:"sessions,omitempty"`
+}
+
+// SessionInfo is a summary of an active session, used by the
+// daemon's "list" response.
+type SessionInfo struct {
+	ID  string `json:"id"`
+	PID int    `json:"pid"`
 }
