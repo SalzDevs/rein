@@ -13,7 +13,7 @@ import (
 
 const (
 	procThreadAttributePseudoConsole = 0x00020016
-	extStartupInfoPresent             = 0x00080000
+	extStartupInfoPresent            = 0x00080000
 )
 
 // startWithPTYPlatform is a stub for Windows. Real ConPTY support
@@ -25,9 +25,9 @@ const (
 // publicly. Implementing ConPTY from scratch would require
 // either:
 //
-//   1. Importing an external ConPTY library
-//      (e.g. github.com/UserExistsError/conpty).
-//   2. Using a private/internal ConPTY binding.
+//  1. Importing an external ConPTY library
+//     (e.g. github.com/UserExistsError/conpty).
+//  2. Using a private/internal ConPTY binding.
 //
 // Both are tracked in the roadmap. For v0.1.0 we return a
 // clear error so the caller knows PTY is not yet supported on

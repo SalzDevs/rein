@@ -180,7 +180,7 @@ func TestRun_KillsProcessGroup(t *testing.T) {
 	// kill(pid, 0) on a dead process returns ESRCH. On a live
 	// process it returns nil. We use this to check liveness without
 	// actually sending a signal.
-	if err := syscall.Kill(pid, 0); err == nil {
+	if err := processIsAlive(pid); err == nil {
 		t.Errorf("child process %d is still alive after parent timeout — process group isolation is not working", pid)
 	} else if !errors.Is(err, syscall.ESRCH) {
 		// Some other error. On Linux this could be EPERM if a
