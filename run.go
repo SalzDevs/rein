@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/a49000/rein/internal/procgroup"
-	reinSignal "github.com/a49000/rein/internal/signal"
+	"github.com/SalzDevs/rein/internal/procgroup"
+	reinSignal "github.com/SalzDevs/rein/internal/signal"
 )
 
 // Run executes a shell command and waits for it to complete or until

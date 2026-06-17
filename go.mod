@@ -1,4 +1,4 @@
-module github.com/a49000/rein
+module github.com/SalzDevs/rein
 
 go 1.25.0
 

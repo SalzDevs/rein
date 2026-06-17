@@ -1,5 +1,8 @@
 # Binaries
 /rein
+/rein.exe
+/cmd/rein/rein
+/cmd/rein/rein.exe
 *.exe
 *.dll
 *.so
