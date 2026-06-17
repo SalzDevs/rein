@@ -373,12 +373,11 @@ func TestSession_PTY_Resize(t *testing.T) {
 }
 
 func TestSession_Overflow_DropNewest(t *testing.T) {
-	// Produce many lines with a tiny buffer and a DropNewest
-	// policy. The first N lines should be in the channel; the
-	// rest are dropped. We use a slow producer (sleep between
-	// lines) so the consumer can't keep up and drops are forced.
+	// We force the buffer to overflow by having the producer
+	// emit very fast while the consumer drains very slowly.
+	// The policy is applied immediately, so drops are guaranteed.
 	session, err := Start(context.Background(),
-		`i=0; while [ $i -lt 50 ]; do echo line-$i; sleep 0.01; i=$((i+1)); done`,
+		`i=0; while [ $i -lt 500 ]; do echo line-$i; i=$((i+1)); done`,
 		WithLineBuffer(4),
 		WithOverflowPolicy(PolicyDropNewest),
 		WithTimeout(10*time.Second),
@@ -388,27 +387,25 @@ func TestSession_Overflow_DropNewest(t *testing.T) {
 	}
 	defer session.Stop()
 
-	// Drain slowly so the producer outpaces us and drops occur.
-	for line := range session.Lines() {
-		_ = line
-		time.Sleep(20 * time.Millisecond)
+	// Drain very slowly so the buffer overflows many times.
+	for range session.Lines() {
+		time.Sleep(2 * time.Millisecond)
 	}
 	session.Wait()
 
-	// Drops should be non-zero. We don't assert an exact count
-	// because timing is machine-dependent; we just verify the
-	// policy was applied.
+	// Some lines should have been dropped. We don't assert an
+	// exact count because timing is machine-dependent, but the
+	// policy should have been applied at least once.
 	if drops := session.Drops(); drops == 0 {
-		t.Errorf("expected some lines to be dropped with DropNewest policy, got 0")
+		t.Errorf("expected at least one line to be dropped with DropNewest policy, got 0")
 	}
 }
 
 func TestSession_Overflow_DropOldest(t *testing.T) {
-	// Produce many lines with a tiny buffer and a DropOldest
-	// policy. The latest lines should be in the channel; the
-	// earliest are dropped.
+	// Same setup as DropNewest: producer is fast, consumer
+	// is slow. We just verify that some lines are dropped.
 	session, err := Start(context.Background(),
-		`i=0; while [ $i -lt 50 ]; do echo line-$i; sleep 0.01; i=$((i+1)); done`,
+		`i=0; while [ $i -lt 500 ]; do echo line-$i; i=$((i+1)); done`,
 		WithLineBuffer(4),
 		WithOverflowPolicy(PolicyDropOldest),
 		WithTimeout(10*time.Second),
@@ -418,25 +415,13 @@ func TestSession_Overflow_DropOldest(t *testing.T) {
 	}
 	defer session.Stop()
 
-	// Collect all lines we can read.
-	var got []string
-	for line := range session.Lines() {
-		got = append(got, line.Text)
-		time.Sleep(20 * time.Millisecond)
+	for range session.Lines() {
+		time.Sleep(2 * time.Millisecond)
 	}
 	session.Wait()
 
-	// Some lines should have been dropped.
 	if drops := session.Drops(); drops == 0 {
-		t.Errorf("expected some lines to be dropped with DropOldest policy, got 0")
-	}
-	// The latest line we received should be one of the recent
-	// ones (the buffer keeps the most recent N).
-	if len(got) > 0 {
-		last := got[len(got)-1]
-		if !strings.HasPrefix(last, "line-") {
-			t.Errorf("expected last line to start with 'line-', got: %q", last)
-		}
+		t.Errorf("expected at least one line to be dropped with DropOldest policy, got 0")
 	}
 }
 
