@@ -32,6 +32,7 @@ Commands:
   run       Run a command to completion, print the result as NDJSON
   start     Start a long-running command, stream lines as NDJSON
   exec      Run a command with a PTY, drive it interactively via NDJSON
+  daemon    Long-running multi-session manager (NDJSON over stdio)
   version   Print the version
   help      Print this help
 
@@ -50,6 +51,8 @@ func main() {
 		startCmd(os.Args[2:])
 	case "exec":
 		execCmd(os.Args[2:])
+	case "daemon":
+		runDaemon()
 	case "version", "-v", "--version":
 		fmt.Println("rein " + version)
 	case "help", "-h", "--help":
