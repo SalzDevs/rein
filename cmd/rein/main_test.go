@@ -357,6 +357,55 @@ func TestCLIExec_NoCommand(t *testing.T) {
 	}
 }
 
+func TestCLIDaemon_CreateAndList(t *testing.T) {
+	// Start the daemon and send a "create" then a "list".
+	stdin := `{"type":"create","id":"s1","command":"sleep 5"}` + "\n" +
+		`{"type":"list"}` + "\n" +
+		`{"type":"destroy","id":"s1"}` + "\n"
+	stdout, _, _ := runCLIWithStdin(t, stdin, "daemon")
+
+	// Parse all NDJSON messages.
+	scanner := bufio.NewScanner(strings.NewReader(stdout))
+	var msgs []map[string]any
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal(line, &m); err != nil {
+			t.Fatalf("invalid NDJSON: %v", err)
+		}
+		msgs = append(msgs, m)
+	}
+
+	// Expect at least: created, sessions, line, exit, destroyed.
+	var sawCreated, sawSessions, sawDestroyed bool
+	for _, m := range msgs {
+		switch m["type"] {
+		case "created":
+			if m["id"] == "s1" {
+				sawCreated = true
+			}
+		case "sessions":
+			sawSessions = true
+		case "destroyed":
+			if m["id"] == "s1" {
+				sawDestroyed = true
+			}
+		}
+	}
+	if !sawCreated {
+		t.Errorf("expected 'created' message, got: %s", stdout)
+	}
+	if !sawSessions {
+		t.Errorf("expected 'sessions' message, got: %s", stdout)
+	}
+	if !sawDestroyed {
+		t.Errorf("expected 'destroyed' message, got: %s", stdout)
+	}
+}
+
 // readNDJSONLines parses newline-delimited JSON from s.
 func readNDJSONLines(t *testing.T, s string) []map[string]any {
 	t.Helper()
