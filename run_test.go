@@ -105,14 +105,16 @@ func TestRun_Env(t *testing.T) {
 }
 
 func TestRun_Dir(t *testing.T) {
-	result, err := Run(context.Background(), `pwd`, WithDir("/tmp"))
+	// Use the OS-appropriate temp directory. /tmp is POSIX-only;
+	// Windows uses %TEMP% (typically C:\Users\...\AppData\Local\Temp).
+	dir := strings.TrimRight(os.TempDir(), "/\\")
+	result, err := Run(context.Background(), `pwd`, WithDir(dir))
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
-	// macOS symlinks /tmp -> /private/tmp, so accept either.
 	got := strings.TrimSpace(result.Stdout)
-	if got != "/tmp" && got != "/private/tmp" {
-		t.Fatalf("expected pwd to be /tmp, got: %q", got)
+	if got != dir {
+		t.Fatalf("expected pwd to be %s, got: %q", dir, got)
 	}
 }
 

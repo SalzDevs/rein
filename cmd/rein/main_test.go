@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,14 @@ func TestMain(m *testing.M) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	binPath = filepath.Join(tmpDir, "rein")
+	// On Windows, executables need the .exe extension; on POSIX
+	// they don't. We let `go build` decide by using the .exe
+	// suffix only on Windows.
+	binName := "rein"
+	if runtime.GOOS == "windows" {
+		binName = "rein.exe"
+	}
+	binPath = filepath.Join(tmpDir, binName)
 	// Build from the project root (one level up from cmd/rein/).
 	cmd := exec.Command("go", "build", "-o", binPath, ".")
 	cmd.Stderr = os.Stderr
