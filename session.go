@@ -47,10 +47,11 @@ type Session struct {
 	done            chan struct{}
 	gracefulTimeout time.Duration
 	idleTimeout     time.Duration
+	overflow        OverflowPolicy
 
-	// ptyMaster is the master end of the PTY when the session was
-	// started with WithPTY. Nil otherwise. Used by Write and Resize.
-	ptyMaster *os.File
+	// pty is the PTY state (reader, writer, resize) when the
+	// session was started with WithPTY. Nil otherwise.
+	pty *ptyState
 
 	// activityCh receives non-blocking pings on every line emitted.
 	// Set by watchIdle if an idle timeout is configured. Nil otherwise.
@@ -61,6 +62,7 @@ type Session struct {
 	stopped  bool
 	result   *Result
 	err      error
+	drops    uint64
 }
 
 // Start launches a long-running command and returns a [Session].
@@ -100,17 +102,18 @@ func Start(ctx context.Context, command string, opts ...Option) (*Session, error
 	procgroup.Apply(cmd)
 
 	var stdoutReader, stderrReader io.Reader
-	var ptyMaster *os.File
+	var pty *ptyState
 	if options.PTY {
 		// startWithPTY calls cmd.Start() internally (required by
-		// the creack/pty API) and returns the master as a file.
-		master, err := startWithPTY(cmd)
+		// the creack/pty or ConPTY API) and returns the master
+		// state.
+		p, err := startWithPTY(cmd)
 		if err != nil {
 			return nil, err
 		}
-		ptyMaster = master
+		pty = p
 		// On a real TTY, stderr is merged with stdout.
-		stdoutReader = master
+		stdoutReader = p
 		stderrReader = nil
 	} else {
 		sr, err := cmd.StdoutPipe()
@@ -152,7 +155,8 @@ func Start(ctx context.Context, command string, opts ...Option) (*Session, error
 		done:            make(chan struct{}),
 		gracefulTimeout: options.GracefulTimeout,
 		idleTimeout:     options.IdleTimeout,
-		ptyMaster:       ptyMaster,
+		pty:             pty,
+		overflow:        options.Overflow,
 	}
 	// Initialize the activity channel up-front if an idle timeout
 	// is configured, so the line reader goroutines (started
@@ -182,17 +186,55 @@ func (s *Session) readLines(stream string, r io.Reader) {
 	scanner.Buffer(make([]byte, 64*1024), maxLineSize)
 	for scanner.Scan() {
 		line := Line{Stream: stream, Text: scanner.Text()}
-		select {
-		case s.lines <- line:
-		case <-s.done:
-			return
-		}
-		// Bump activity (non-blocking) so the idle watcher knows
-		// the process is still emitting.
+		s.sendLine(line)
 		if s.activityCh != nil {
 			select {
 			case s.activityCh <- struct{}{}:
 			default:
+			}
+		}
+	}
+}
+
+// sendLine sends a line to the session's lines channel, applying
+// the configured OverflowPolicy when the channel is full.
+func (s *Session) sendLine(line Line) {
+	for {
+		select {
+		case s.lines <- line:
+			return
+		case <-s.done:
+			return
+		default:
+		}
+		// Channel is full; apply the overflow policy.
+		s.mu.Lock()
+		policy := s.overflow
+		s.mu.Unlock()
+		switch policy {
+		case PolicyBlock:
+			// Block until there is room (or we are done).
+			select {
+			case s.lines <- line:
+				return
+			case <-s.done:
+				return
+			}
+		case PolicyDropNewest:
+			s.mu.Lock()
+			s.drops++
+			s.mu.Unlock()
+			return
+		case PolicyDropOldest:
+			// Drain one element to make room.
+			select {
+			case <-s.lines:
+				s.mu.Lock()
+				s.drops++
+				s.mu.Unlock()
+			default:
+				// Race: a consumer drained the channel between our
+				// checks. Loop and try again.
 			}
 		}
 	}
@@ -295,12 +337,26 @@ func (s *Session) waitAndClose(stdout, stderr io.Reader) {
 // process output. The channel is closed when the process exits.
 //
 // The channel is buffered (default 4096 lines; see
-// [WithLineBuffer]). If the consumer is slow, the producer will
-// block once the buffer fills, which back-pressures the
-// subprocess and (with [WithIdleTimeout] configured) triggers the
-// idle kill.
+// [WithLineBuffer]). The OverflowPolicy (see [WithOverflowPolicy])
+// controls what happens when the buffer fills:
+//
+//	PolicyBlock      (default) — the producer waits.
+//	PolicyDropNewest — the new line is dropped silently.
+//	PolicyDropOldest — the oldest buffered line is dropped to
+//	                    make room for the new one.
+//
+// Dropped lines can be detected with [Session.Drops].
 func (s *Session) Lines() <-chan Line {
 	return s.lines
+}
+
+// Drops returns the number of output lines that have been dropped
+// due to the configured OverflowPolicy. Useful for monitoring
+// back-pressure in long-running consumers.
+func (s *Session) Drops() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.drops
 }
 
 // Wait blocks until the process exits and returns the final
@@ -343,12 +399,12 @@ func (s *Session) PID() int {
 // Write is safe to call from any goroutine.
 func (s *Session) Write(p []byte) (int, error) {
 	s.mu.Lock()
-	master := s.ptyMaster
+	pty := s.pty
 	s.mu.Unlock()
-	if master == nil {
-		return 0, errors.New("rein: session is not running with a PTY; use WithPTY")
+	if pty == nil {
+		return 0, errPTYRequired
 	}
-	return master.Write(p)
+	return pty.Write(p)
 }
 
 // Resize resizes the PTY window to rows x cols. Only works for
@@ -358,10 +414,10 @@ func (s *Session) Write(p []byte) (int, error) {
 // Resize is safe to call from any goroutine.
 func (s *Session) Resize(rows, cols int) error {
 	s.mu.Lock()
-	master := s.ptyMaster
+	pty := s.pty
 	s.mu.Unlock()
-	if master == nil {
-		return errors.New("rein: session is not running with a PTY; use WithPTY")
+	if pty == nil {
+		return errPTYRequired
 	}
-	return resizePTY(master, rows, cols)
+	return pty.resize(rows, cols)
 }
