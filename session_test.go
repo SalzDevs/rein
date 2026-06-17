@@ -2,6 +2,7 @@ package rein
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -275,5 +276,98 @@ func TestStart_DoneChannel(t *testing.T) {
 		// Good, Done was closed when the process exited
 	case <-time.After(2 * time.Second):
 		t.Fatal("Done channel was not closed within 2s")
+	}
+}
+
+func TestSession_WriteRequiresPTY(t *testing.T) {
+	session, err := Start(context.Background(), `sleep 5`)
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer session.Stop()
+
+	_, err = session.Write([]byte("hello"))
+	if err == nil {
+		t.Error("expected error when writing to non-PTY session")
+	}
+	if !strings.Contains(err.Error(), "PTY") {
+		t.Errorf("expected error to mention PTY, got: %v", err)
+	}
+}
+
+func TestSession_ResizeRequiresPTY(t *testing.T) {
+	session, err := Start(context.Background(), `sleep 5`)
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer session.Stop()
+
+	err = session.Resize(40, 120)
+	if err == nil {
+		t.Error("expected error when resizing non-PTY session")
+	}
+	if !strings.Contains(err.Error(), "PTY") {
+		t.Errorf("expected error to mention PTY, got: %v", err)
+	}
+}
+
+func TestSession_PTY_Write(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PTY not yet implemented on Windows")
+	}
+
+	// `cat` echoes its stdin to stdout. With a PTY, we can
+	// write to its stdin and read the echoed output.
+	session, err := Start(context.Background(), `cat`,
+		WithPTY(),
+		WithTimeout(5*time.Second),
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "operation not permitted") {
+			t.Skipf("PTY not available in this environment: %v", err)
+		}
+		t.Fatalf("Start with PTY failed: %v", err)
+	}
+	defer session.Stop()
+
+	// Write a line with a newline so cat echoes it.
+	if _, err := session.Write([]byte("hello-from-write\n")); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Read the echoed line.
+	lines := readLines(t, session, 1, 3*time.Second)
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d: %+v", len(lines), lines)
+	}
+	if lines[0].Text != "hello-from-write" {
+		t.Errorf("expected 'hello-from-write', got: %q", lines[0].Text)
+	}
+}
+
+func TestSession_PTY_Resize(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PTY not yet implemented on Windows")
+	}
+
+	// A long sleep so we have time to resize. The resize itself
+	// should not produce an error.
+	session, err := Start(context.Background(), `sleep 5`,
+		WithPTY(),
+		WithTimeout(5*time.Second),
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "operation not permitted") {
+			t.Skipf("PTY not available in this environment: %v", err)
+		}
+		t.Fatalf("Start with PTY failed: %v", err)
+	}
+	defer session.Stop()
+
+	if err := session.Resize(40, 120); err != nil {
+		t.Errorf("Resize(40, 120) failed: %v", err)
+	}
+	if err := session.Resize(50, 200); err != nil {
+		t.Errorf("Resize(50, 200) failed: %v", err)
 	}
 }
