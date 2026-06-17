@@ -17,6 +17,9 @@ func TestEncoderDecoderRoundTrip(t *testing.T) {
 		{Type: TypeExit, ExitCode: i(1), Err: "command exited with code 1"},
 		{Type: TypeError, Err: "failed to start"},
 		{Type: TypeStop},
+		{Type: TypeInput, Text: "password\n"},
+		{Type: TypeResize, Rows: i(40), Cols: i(120)},
+		{Type: TypeResize, Rows: i(0), Cols: i(0)},
 	}
 
 	var buf bytes.Buffer
@@ -53,6 +56,12 @@ func TestEncoderDecoderRoundTrip(t *testing.T) {
 		}
 		if got.Err != cases[i].Err {
 			t.Errorf("case %d: err = %q, want %q", i, got.Err, cases[i].Err)
+		}
+		if !ptrEq(got.Rows, cases[i].Rows) {
+			t.Errorf("case %d: rows mismatch", i)
+		}
+		if !ptrEq(got.Cols, cases[i].Cols) {
+			t.Errorf("case %d: cols mismatch", i)
 		}
 	}
 }
