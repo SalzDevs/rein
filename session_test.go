@@ -256,8 +256,6 @@ func TestStart_Env(t *testing.T) {
 	}
 }
 
-
-
 func TestStart_PID(t *testing.T) {
 	session, err := Start(context.Background(), `sleep 5`)
 	if err != nil {

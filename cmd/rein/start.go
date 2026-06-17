@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -103,8 +104,18 @@ func startCmd(args []string) {
 		os.Exit(1)
 	}
 
+	// Track the line forwarder specifically. We need to wait
+	// for it to drain the lines channel before emitting the
+	// final "exit" message; otherwise the consumer would see
+	// "exit" before the last lines. The signal and stdin
+	// goroutines are fire-and-forget — they terminate with the
+	// process and don't need to be joined.
+	var forwarderWg sync.WaitGroup
+
 	// forward lines to stdout as NDJSON
+	forwarderWg.Add(1)
 	go func() {
+		defer forwarderWg.Done()
 		for line := range session.Lines() {
 			if err := enc.Encode(&ndjson.Message{
 				Type:   ndjson.TypeLine,
@@ -144,6 +155,12 @@ func startCmd(args []string) {
 	}()
 
 	result, _ := session.Wait()
+
+	// Wait for the line forwarder to drain the channel before
+	// emitting "exit". The session's lines channel is closed
+	// after all internal readers finish, so the forwarder's
+	// range loop will exit once the buffer is drained.
+	forwarderWg.Wait()
 
 	ec := result.ExitCode
 	dur := result.Duration.Milliseconds()
