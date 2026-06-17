@@ -18,8 +18,8 @@ func startWithPTYPlatform(cmd *exec.Cmd) (*ptyState, error) {
 		return nil, fmt.Errorf("rein: failed to start with pty: %w", err)
 	}
 	return &ptyState{
-		read:   master,
-		write:  master,
+		read:  master,
+		write: master,
 		resize: func(rows, cols int) error {
 			return pty.Setsize(master, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
 		},

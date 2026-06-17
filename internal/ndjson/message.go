@@ -72,6 +72,7 @@ const (
 //	Type=list      (daemon only)
 //
 // Outgoing (daemon only):
+//
 //	Type=created   ID, PID are set.
 //	Type=destroyed ID, ExitCode are set.
 //	Type=sessions  Sessions is a list of {id, pid}.
@@ -81,20 +82,20 @@ const (
 // String fields use omitempty (the zero value is the empty string,
 // which we treat as absent).
 type Message struct {
-	Type       string         `json:"type"`
-	ID         string         `json:"id,omitempty"`
-	Stream     string         `json:"stream,omitempty"`
-	Text       string         `json:"text,omitempty"`
-	Command    string         `json:"command,omitempty"`
-	PID        *int           `json:"pid,omitempty"`
-	ExitCode   *int           `json:"exit_code,omitempty"`
-	DurationMS *int64         `json:"duration_ms,omitempty"`
-	Err        string         `json:"err,omitempty"`
-	Stdout     string         `json:"stdout,omitempty"`
-	Stderr     string         `json:"stderr,omitempty"`
-	Rows       *int           `json:"rows,omitempty"`
-	Cols       *int           `json:"cols,omitempty"`
-	Sessions   []SessionInfo  `json:"sessions,omitempty"`
+	Type       string        `json:"type"`
+	ID         string        `json:"id,omitempty"`
+	Stream     string        `json:"stream,omitempty"`
+	Text       string        `json:"text,omitempty"`
+	Command    string        `json:"command,omitempty"`
+	PID        *int          `json:"pid,omitempty"`
+	ExitCode   *int          `json:"exit_code,omitempty"`
+	DurationMS *int64        `json:"duration_ms,omitempty"`
+	Err        string        `json:"err,omitempty"`
+	Stdout     string        `json:"stdout,omitempty"`
+	Stderr     string        `json:"stderr,omitempty"`
+	Rows       *int          `json:"rows,omitempty"`
+	Cols       *int          `json:"cols,omitempty"`
+	Sessions   []SessionInfo `json:"sessions,omitempty"`
 }
 
 // SessionInfo is a summary of an active session, used by the

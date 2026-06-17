@@ -13,7 +13,7 @@ import (
 
 const (
 	procThreadAttributePseudoConsole = 0x00020016
-	extStartupInfoPresent             = 0x00080000
+	extStartupInfoPresent            = 0x00080000
 )
 
 // startWithPTYPlatform creates a ConPTY, starts the command

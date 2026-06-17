@@ -1,21 +1,21 @@
 # rein
 
-> The shell layer AI agents don't break.
+> **The shell layer AI agents don't break.**
 
-`rein` is a small Go library **and CLI** that runs shell commands the
-way AI agents actually need: with timeouts that work, signals that
-propagate, and process trees that get cleaned up when the context is
-cancelled.
+[![CI](https://github.com/SalzDevs/rein/actions/workflows/ci.yml/badge.svg)](https://github.com/SalzDevs/rein/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/SalzDevs/rein)](https://goreportcard.com/report/github.com/SalzDevs/rein)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-It is designed to be the foundation underneath any agent framework
-that needs to execute commands — replacing the broken `os/exec`,
-`subprocess.Popen`, and `child_process.spawn` wrappers that every
-agent framework currently reinvents.
+**rein** is a Go library + CLI for running shell commands inside AI
+agent frameworks. It fixes the four bugs that every agent framework
+has — **hangs on long-running commands** (`#2183`, `#25979`),
+**silent stalls on stalled TCP** (`#3371`), **leaked child processes**
+(`#26224`), and **no graceful shutdown** (`#53328`) — with proper
+process group isolation, timeouts, idle kills, and real PTY support.
 
-Two ways to use it:
-
-1. **As a Go library** (typed, structured, fast)
-2. **As a CLI binary** via NDJSON over stdio (works with any language)
+The CLI speaks NDJSON over stdio so any language can use it.
+Python and Node.js clients are included. Works on Linux, macOS, and
+Windows (ConPTY).
 
 ## Install
 
@@ -68,7 +68,8 @@ fmt.Println(result.Stdout)
 
 That is it. `rein.Run` runs the command, captures stdout and stderr,
 returns the exit code, and **kills the entire process tree** if the
-timeout fires.
+timeout fires. No leaked child processes. No zombie `npm install`s.
+No `npm run dev` hanging forever.
 
 ## The 5-second pitch (CLI)
 
@@ -136,6 +137,9 @@ func (s *Session) Wait() (*Result, error)
 func (s *Session) Done() <-chan struct{}
 func (s *Session) Stop() error
 func (s *Session) PID() int
+func (s *Session) Write(p []byte) (int, error)   // exec only
+func (s *Session) Resize(rows, cols int) error    // exec only
+func (s *Session) Drops() uint64                  // overflow count
 ```
 
 ### Functional options
@@ -143,11 +147,12 @@ func (s *Session) PID() int
 ```go
 func WithTimeout(d time.Duration) Option
 func WithGracefulTimeout(d time.Duration) Option
-func WithIdleTimeout(d time.Duration) Option   // Start only
+func WithIdleTimeout(d time.Duration) Option
 func WithEnv(env []string) Option
 func WithDir(dir string) Option
-func WithPTY() Option                          // POSIX only
+func WithPTY() Option
 func WithLineBuffer(n int) Option
+func WithOverflowPolicy(p OverflowPolicy) Option  // Block | DropNewest | DropOldest
 ```
 
 ## CLI reference
@@ -198,9 +203,63 @@ Control: NDJSON on stdin, one message per line.
 Signals: SIGINT/SIGTERM stop the process.
 ```
 
+### `rein exec`
+
+```
+rein exec [options] <command>
+
+A PTY is always allocated. This subcommand is for interactive
+commands that prompt the user (sudo, ssh-add, npm init, etc.).
+
+Options:
+  --timeout <duration>          Maximum wall-clock duration
+  --graceful-timeout <duration> Time to wait between SIGTERM and SIGKILL
+  --idle-timeout <duration>     Kill the process if no output for this duration
+  --dir <path>                  Working directory
+  --env <KEY=VALUE>             Environment variable (repeatable)
+  --line-buffer <n>             Size of the output channel buffer
+  --initial-size <rows>x<cols>  Initial PTY window size (default 24x80)
+
+Output: NDJSON on stdout, one message per line.
+Control: NDJSON on stdin, one message per line.
+  {"type":"input","text":"password\n"}    Write to the child's stdin.
+  {"type":"resize","rows":40,"cols":120} Resize the PTY window.
+  {"type":"stop"}                           Stop the process.
+Signals: SIGINT/SIGTERM stop the process.
+```
+
+### `rein daemon`
+
+```
+rein daemon
+```
+
+A long-running process that manages multiple rein sessions. The
+daemon reads commands on stdin and emits events on stdout, both
+as NDJSON. It enables an agent to start, observe, and control
+many processes from a single connection.
+
+Inputs:
+  {"type":"create","id":"...","command":"...","options":{...}}
+  {"type":"destroy","id":"..."}
+  {"type":"stop","id":"..."}
+  {"type":"input","id":"...","text":"..."}
+  {"type":"resize","id":"...","rows":N,"cols":M}
+  {"type":"list"}
+
+Outputs:
+  {"type":"created","id":"...","pid":...}
+  {"type":"line","id":"...","stream":"...","text":"..."}
+  {"type":"exit","id":"...","exit_code":...,"duration_ms":...}
+  {"type":"destroyed","id":"...","exit_code":...}
+  {"type":"sessions","sessions":[{"id":"...","pid":...}]}
+
+Example: see `clients/python` and `clients/node` for full
+client libraries that wrap the daemon protocol.
+
 ## NDJSON protocol
 
-The CLI speaks newline-delimited JSON on stdio. Seven message types:
+The CLI speaks newline-delimited JSON on stdio. Eight message types:
 
 ### Outgoing (stdout)
 
@@ -210,14 +269,20 @@ The CLI speaks newline-delimited JSON on stdio. Seven message types:
 | `line` | `stream` (`"stdout"`/`"stderr"`), `text` | Each line of output. |
 | `exit` | `exit_code`, `duration_ms`, `stdout`, `stderr`, `err` | The process has exited. |
 | `error` | `err` | Error before the process started. |
+| `created` (daemon) | `id`, `pid` | A new session was created. |
+| `destroyed` (daemon) | `id`, `exit_code` | A session was destroyed. |
+| `sessions` (daemon) | `sessions` (array of `{id, pid}`) | List of active sessions. |
 
 ### Incoming (stdin)
 
 | Type | Fields | Effect |
 |---|---|---|
-| `stop` | (none) | Ask rein to stop the running process. (Both `start` and `exec`.) |
-| `input` | `text` | Write `text` to the child's stdin. (`exec` only — needs PTY.) |
-| `resize` | `rows`, `cols` | Resize the PTY window. (`exec` only.) |
+| `stop` | (none) | Ask rein to stop the running process. |
+| `input` | `text` | Write `text` to the child's stdin. (`exec` only) |
+| `resize` | `rows`, `cols` | Resize the PTY window. (`exec` only) |
+| `create` (daemon) | `id`, `command` | Create a new session. |
+| `destroy` (daemon) | `id` | Destroy an existing session. |
+| `list` (daemon) | (none) | List active sessions. |
 
 ### Example: Python client
 
@@ -262,7 +327,6 @@ rl.on("line", (line) => {
   }
 });
 
-// Stop after 30s
 setTimeout(() => {
   child.stdin.write(JSON.stringify({ type: "stop" }) + "\n");
 }, 30_000);
@@ -285,28 +349,36 @@ and write to disk before being killed.
 
 | OS | Status |
 |---|---|
-| Linux | Full support (process groups, SIGTERM, SIGKILL, PTY, CLI) |
-| macOS | Full support (process groups, SIGTERM, SIGKILL, PTY, CLI) |
-| Windows | Partial — process group isolation via Job Objects is not yet implemented. PTY uses ConPTY (not yet wired). SIGTERM/SIGKILL are sent to the leader only; grandchildren may leak. |
+| Linux | Full support (process groups, SIGTERM, SIGKILL, PTY, CLI, all features) |
+| macOS | Full support (process groups, SIGTERM, SIGKILL, PTY, CLI, all features) |
+| Windows | Process group via Job Objects, PTY via ConPTY, SIGKILL via TerminateProcess. All features work on Windows 10 1809+. |
 
 ## Roadmap
 
 - [x] `Run()` for one-shot commands
 - [x] Timeouts with graceful shutdown
-- [x] Process group isolation (POSIX)
+- [x] Process group isolation (POSIX) / Job Object (Windows)
 - [x] `Start()` for long-running commands with line-buffered streaming
 - [x] Idle timeout (kill on silence)
 - [x] `Stop()` for explicit shutdown
-- [x] Real PTY allocation for interactive commands (POSIX)
+- [x] Real PTY allocation (POSIX creack/pty, Windows ConPTY)
 - [x] CLI binary (`rein run`, `rein start`, `rein exec`, `rein daemon`)
-- [x] NDJSON protocol for cross-language use (run, start, input, resize, stop, create, destroy, list)
+- [x] NDJSON protocol for cross-language use
 - [x] `Session.Write()` and `Session.Resize()` for interactive PTY use
-- [x] Bounded output buffer with overflow policies (Block, DropNewest, DropOldest)
+- [x] Bounded output buffer with overflow policies
 - [x] Python and Node client libraries
-- [x] Windows ConPTY + Job Object support
 - [x] `rein daemon` — multi-session stateful manager
 - [ ] Persistent cross-process state (for long-lived agents)
 - [ ] `rein watch` for filesystem-triggered re-runs
+- [ ] Security sandbox for untrusted commands (seccomp / sandbox-exec)
+
+## Contributing
+
+Contributions are welcome. Please [open an issue](https://github.com/SalzDevs/rein/issues/new) before sending a PR so we can discuss the approach. Run the test suite (`go test ./...`) before submitting.
+
+## Security
+
+For security issues, please email `security@salzdevs.com` instead of opening a public issue. See [SECURITY.md](SECURITY.md) for our policy.
 
 ## License
 
