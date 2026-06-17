@@ -2,6 +2,30 @@ package rein
 
 import "time"
 
+// OverflowPolicy controls what happens when the line buffer is
+// full and the producer tries to add another line.
+type OverflowPolicy int
+
+const (
+	// PolicyBlock causes the producer to wait until the consumer
+	// has drained some lines. This is the safest option: no lines
+	// are lost. The downside is that the producer (and the
+	// subprocess) can appear to hang if the consumer is slow.
+	// Default.
+	PolicyBlock OverflowPolicy = iota
+
+	// PolicyDropNewest causes the producer to silently drop the
+	// new line and increment the drop counter. The consumer sees
+	// only the first N lines of output. The subprocess never
+	// blocks.
+	PolicyDropNewest
+
+	// PolicyDropOldest causes the producer to drop the oldest
+	// buffered line and add the new one. The consumer always sees
+	// the most recent output. The drop counter is incremented.
+	PolicyDropOldest
+)
+
 // Options configures a single Run or Start call. Zero values are
 // replaced with sensible defaults; see the [Option] functions.
 type Options struct {
@@ -38,10 +62,13 @@ type Options struct {
 	PTY bool
 
 	// LineBuffer is the size of the channel that buffers output
-	// lines from a Start session before the producer blocks.
-	// Default: 4096. Increase for fast-output processes whose
-	// consumer is slow.
+	// lines from a Start session before the producer applies
+	// OverflowPolicy. Default: 4096.
 	LineBuffer int
+
+	// Overflow is the policy applied when LineBuffer is full.
+	// Default: PolicyBlock.
+	Overflow OverflowPolicy
 }
 
 // Option is a functional option for [Run] or [Start].
@@ -98,6 +125,13 @@ func WithLineBuffer(n int) Option {
 	return func(o *Options) { o.LineBuffer = n }
 }
 
+// WithOverflowPolicy sets what happens when the line buffer is
+// full. See [OverflowPolicy] for the options. Default:
+// PolicyBlock.
+func WithOverflowPolicy(p OverflowPolicy) Option {
+	return func(o *Options) { o.Overflow = p }
+}
+
 // defaultOptions returns the Options used when the caller does not
 // override them.
 func defaultOptions() *Options {
@@ -105,5 +139,6 @@ func defaultOptions() *Options {
 		Timeout:         30 * time.Second,
 		GracefulTimeout: 5 * time.Second,
 		LineBuffer:      4096,
+		Overflow:        PolicyBlock,
 	}
 }
