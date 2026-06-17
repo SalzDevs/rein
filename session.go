@@ -57,12 +57,13 @@ type Session struct {
 	// Set by watchIdle if an idle timeout is configured. Nil otherwise.
 	activityCh chan struct{}
 
-	stopOnce sync.Once
-	mu       sync.Mutex
-	stopped  bool
-	result   *Result
-	err      error
-	drops    uint64
+	stopOnce   sync.Once
+	mu         sync.Mutex
+	stopped    bool
+	result     *Result
+	err        error
+	drops      uint64
+	readersWg  sync.WaitGroup // incremented by each readLines goroutine
 }
 
 // Start launches a long-running command and returns a [Session].
@@ -178,10 +179,15 @@ func Start(ctx context.Context, command string, opts ...Option) (*Session, error
 // readLines reads from r line-by-line and sends each line to the
 // session's lines channel. It also pings the activity channel if
 // one is configured.
+//
+// The caller must call s.readersWg.Add(1) BEFORE invoking this
+// in a goroutine, to avoid a race with waitAndClose's Wait.
 func (s *Session) readLines(stream string, r io.Reader) {
+	defer s.readersWg.Done()
 	if r == nil {
 		return
 	}
+
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), maxLineSize)
 	for scanner.Scan() {
@@ -302,13 +308,21 @@ func (s *Session) watchIdle() {
 
 // waitAndClose reads from the pipes, then waits for the process
 // to exit, builds the Result, and closes the lines and done
-// channels.
+// channels. The lines channel is closed AFTER all line reader
+// goroutines have exited (via readersWg.Wait), so a line reader
+// blocked on send will see the done channel close, return, and
+// only then will the lines channel be closed — avoiding the
+// "send on closed channel" panic.
 func (s *Session) waitAndClose(stdout, stderr io.Reader) {
-	// Launch line readers in parallel. They exit when their pipe
-	// returns EOF (the process exited) or the done channel is
-	// closed (Stop() was called and the process was killed).
-	go s.readLines("stdout", stdout)
+	// Launch line readers in parallel. We Add(1) BEFORE the
+	// goroutine starts to avoid a race with the Wait below
+	// (Wait requires that Add has been called first).
+	if stdout != nil {
+		s.readersWg.Add(1)
+		go s.readLines("stdout", stdout)
+	}
 	if stderr != nil {
+		s.readersWg.Add(1)
 		go s.readLines("stderr", stderr)
 	}
 
@@ -330,6 +344,10 @@ func (s *Session) waitAndClose(stdout, stderr io.Reader) {
 	s.mu.Unlock()
 
 	close(s.done)
+	// Wait for all line readers to exit. A line reader that is
+	// blocked on send (PolicyBlock) will see done closed via
+	// its inner select and return, decrementing the WaitGroup.
+	s.readersWg.Wait()
 	close(s.lines)
 }
 
