@@ -23,6 +23,12 @@ const (
 
 	// Incoming: ask rein to stop the running process.
 	TypeStop = "stop"
+
+	// Incoming (PTY only): write Text to the child's stdin.
+	TypeInput = "input"
+
+	// Incoming (PTY only): resize the PTY window to Rows x Cols.
+	TypeResize = "resize"
 )
 
 // Message is a single NDJSON frame in the rein protocol.
@@ -35,11 +41,14 @@ const (
 //	Type=error     Err is set.
 //	Type=stop      No fields; signals that the caller wants the
 //	                process stopped.
+//	Type=input     Text is set; the bytes are written to the
+//	                child's stdin (PTY only).
+//	Type=resize    Rows and Cols are set; the PTY window is resized.
 //
-// Numeric fields (PID, ExitCode, DurationMS) are pointers so a
-// genuine 0 is distinguishable from "field not set". String
-// fields use omitempty (the zero value is the empty string, which
-// we treat as absent).
+// Numeric fields (PID, ExitCode, DurationMS, Rows, Cols) are
+// pointers so a genuine 0 is distinguishable from "field not set".
+// String fields use omitempty (the zero value is the empty string,
+// which we treat as absent).
 type Message struct {
 	Type       string `json:"type"`
 	Stream     string `json:"stream,omitempty"`
@@ -50,4 +59,6 @@ type Message struct {
 	Err        string `json:"err,omitempty"`
 	Stdout     string `json:"stdout,omitempty"`
 	Stderr     string `json:"stderr,omitempty"`
+	Rows       *int   `json:"rows,omitempty"`
+	Cols       *int   `json:"cols,omitempty"`
 }
