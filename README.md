@@ -8,14 +8,15 @@
 
 **rein** is a Go library + CLI for running shell commands inside AI
 agent frameworks. It fixes the four bugs that every agent framework
-has — **hangs on long-running commands** (`#2183`, `#25979`),
-**silent stalls on stalled TCP** (`#3371`), **leaked child processes**
-(`#26224`), and **no graceful shutdown** (`#53328`) — with proper
-process group isolation, timeouts, idle kills, and real PTY support.
+has — **hangs on long-running commands**, **silent stalls on stalled
+TCP**, **leaked child processes**, and **no graceful shutdown** — with
+proper process group isolation, timeouts, idle kills, and real PTY
+support.
 
 The CLI speaks NDJSON over stdio so any language can use it.
-Python and Node.js clients are included. Works on Linux, macOS, and
-Windows (ConPTY).
+Python and Node.js clients are included. Works on Linux and macOS;
+Windows supports non-PTY sessions and is on the roadmap for full
+ConPTY support.
 
 ## Install
 
@@ -93,9 +94,8 @@ $ echo '{"type":"stop"}' | rein start "sleep 30"
 ## Why this exists
 
 Every AI agent framework — Claude Code, Cursor, Aider, Cline, Codex,
-Gemini CLI, OpenCode, you name it — has the same open issues
-(`#2183`, `#25979`, `#53328`, `#26224`, ...). They all boil down
-to four things:
+Gemini CLI, OpenCode, you name it — has the same open issues. They
+all boil down to four things:
 
 1. **Hangs on long-running commands** (`npm run dev`, `pnpm dlx convex dev`).
 2. **Silent stalls on stalled TCP** (no keepalive, no read timeout).
@@ -351,17 +351,17 @@ and write to disk before being killed.
 |---|---|
 | Linux | Full support (process groups, SIGTERM, SIGKILL, PTY, CLI, all features) |
 | macOS | Full support (process groups, SIGTERM, SIGKILL, PTY, CLI, all features) |
-| Windows | Process group via Job Objects, PTY via ConPTY, SIGKILL via TerminateProcess. All features work on Windows 10 1809+. |
+| Windows | Process group via Job Objects (partial), SIGKILL via TerminateProcess. Non-PTY sessions work on Windows 10 1809+. ConPTY support is on the v0.2 roadmap. |
 
 ## Roadmap
 
 - [x] `Run()` for one-shot commands
 - [x] Timeouts with graceful shutdown
-- [x] Process group isolation (POSIX) / Job Object (Windows)
+- [x] Process group isolation (POSIX) / Job Object scaffolding (Windows; v0.2)
 - [x] `Start()` for long-running commands with line-buffered streaming
 - [x] Idle timeout (kill on silence)
 - [x] `Stop()` for explicit shutdown
-- [x] Real PTY allocation (POSIX creack/pty, Windows ConPTY)
+- [x] Real PTY allocation (POSIX creack/pty; Windows ConPTY is on the v0.2 roadmap)
 - [x] CLI binary (`rein run`, `rein start`, `rein exec`, `rein daemon`)
 - [x] NDJSON protocol for cross-language use
 - [x] `Session.Write()` and `Session.Resize()` for interactive PTY use
@@ -369,6 +369,7 @@ and write to disk before being killed.
 - [x] Python and Node client libraries
 - [x] `rein daemon` — multi-session stateful manager
 - [ ] Persistent cross-process state (for long-lived agents)
+- [ ] Windows ConPTY (true PTY sessions on Windows)
 - [ ] `rein watch` for filesystem-triggered re-runs
 - [ ] Security sandbox for untrusted commands (seccomp / sandbox-exec)
 
