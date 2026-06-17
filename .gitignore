@@ -1,0 +1,22 @@
+# Binaries
+/rein
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
