@@ -139,6 +139,9 @@ func TestCLIRun_NonZeroExit(t *testing.T) {
 }
 
 func TestCLIRun_Timeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows process-group kill is partial; tracked in v0.2")
+	}
 	start := time.Now()
 	stdout, _, code := runCLI(t, "run", "--timeout", "200ms", "sleep 5")
 	elapsed := time.Since(start)
@@ -302,6 +305,10 @@ func TestCLIExec_StreamsAndExits(t *testing.T) {
 }
 
 func TestCLIExec_StopViaStdin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PTY not yet supported on Windows; tracked in v0.2")
+	}
+
 	stdout, _, _ := runCLIWithStdin(t, `{"type":"stop"}`+"\n", "exec", "sleep 30")
 
 	// Skip if PTY is not available.
@@ -326,6 +333,10 @@ func TestCLIExec_StopViaStdin(t *testing.T) {
 }
 
 func TestCLIExec_InputAndResize(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PTY not yet supported on Windows; tracked in v0.2")
+	}
+
 	// `cat` echoes its stdin to stdout. With a PTY, we can write
 	// to its stdin via NDJSON and read the echoed output.
 	stdin := `{"type":"input","text":"hello-from-input\n"}` + "\n" +
