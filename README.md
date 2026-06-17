@@ -35,6 +35,20 @@ go install github.com/SalzDevs/rein/cmd/rein@latest
 
 The `rein` binary ends up in `$GOPATH/bin`.
 
+### As a Python client
+
+```bash
+go install github.com/SalzDevs/rein/cmd/rein@latest
+pip install ./clients/python
+```
+
+### As a Node.js client
+
+```bash
+go install github.com/SalzDevs/rein/cmd/rein@latest
+npm install ./clients/node
+```
+
 ## The 5-second pitch (library)
 
 ```go
@@ -144,6 +158,8 @@ rein <command> [arguments]
 Commands:
   run       Run a command to completion, print the result as NDJSON
   start     Start a long-running command, stream lines as NDJSON
+  exec      Run a command with a PTY, drive it interactively via NDJSON
+  daemon    Long-running multi-session manager (NDJSON over stdio)
   version   Print the version
   help      Print this help
 ```
@@ -282,12 +298,15 @@ and write to disk before being killed.
 - [x] Idle timeout (kill on silence)
 - [x] `Stop()` for explicit shutdown
 - [x] Real PTY allocation for interactive commands (POSIX)
-- [x] CLI binary (`rein run`, `rein start`, `rein exec`)
-- [x] NDJSON protocol for cross-language use (run, start, input, resize, stop)
+- [x] CLI binary (`rein run`, `rein start`, `rein exec`, `rein daemon`)
+- [x] NDJSON protocol for cross-language use (run, start, input, resize, stop, create, destroy, list)
 - [x] `Session.Write()` and `Session.Resize()` for interactive PTY use
-- [ ] Windows ConPTY + Job Object support
-- [ ] Bounded output buffer with overflow policy
+- [x] Bounded output buffer with overflow policies (Block, DropNewest, DropOldest)
+- [x] Python and Node client libraries
+- [x] Windows ConPTY + Job Object support
+- [x] `rein daemon` — multi-session stateful manager
 - [ ] Persistent cross-process state (for long-lived agents)
+- [ ] `rein watch` for filesystem-triggered re-runs
 
 ## License
 
