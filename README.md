@@ -184,7 +184,7 @@ Signals: SIGINT/SIGTERM stop the process.
 
 ## NDJSON protocol
 
-The CLI speaks newline-delimited JSON on stdio. Five message types:
+The CLI speaks newline-delimited JSON on stdio. Seven message types:
 
 ### Outgoing (stdout)
 
@@ -199,7 +199,9 @@ The CLI speaks newline-delimited JSON on stdio. Five message types:
 
 | Type | Fields | Effect |
 |---|---|---|
-| `stop` | (none) | Ask rein to stop the running process. |
+| `stop` | (none) | Ask rein to stop the running process. (Both `start` and `exec`.) |
+| `input` | `text` | Write `text` to the child's stdin. (`exec` only — needs PTY.) |
+| `resize` | `rows`, `cols` | Resize the PTY window. (`exec` only.) |
 
 ### Example: Python client
 
@@ -280,12 +282,12 @@ and write to disk before being killed.
 - [x] Idle timeout (kill on silence)
 - [x] `Stop()` for explicit shutdown
 - [x] Real PTY allocation for interactive commands (POSIX)
-- [x] CLI binary (`rein run`, `rein start`)
-- [x] NDJSON protocol for cross-language use
+- [x] CLI binary (`rein run`, `rein start`, `rein exec`)
+- [x] NDJSON protocol for cross-language use (run, start, input, resize, stop)
+- [x] `Session.Write()` and `Session.Resize()` for interactive PTY use
 - [ ] Windows ConPTY + Job Object support
 - [ ] Bounded output buffer with overflow policy
 - [ ] Persistent cross-process state (for long-lived agents)
-- [ ] `rein exec` subcommand for interactive PTY sessions
 
 ## License
 
