@@ -31,6 +31,7 @@ Usage:
 Commands:
   run       Run a command to completion, print the result as NDJSON
   start     Start a long-running command, stream lines as NDJSON
+  exec      Run a command with a PTY, drive it interactively via NDJSON
   version   Print the version
   help      Print this help
 
@@ -47,6 +48,8 @@ func main() {
 		runCmd(os.Args[2:])
 	case "start":
 		startCmd(os.Args[2:])
+	case "exec":
+		execCmd(os.Args[2:])
 	case "version", "-v", "--version":
 		fmt.Println("rein " + version)
 	case "help", "-h", "--help":
