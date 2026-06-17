@@ -30,5 +30,5 @@ func processGroup(cmd *exec.Cmd, sig syscall.Signal) error {
 	} else {
 		exitCode = uint32(sig)
 	}
-	return windows.TerminateProcess(windows.Handle(cmd.Process.Handle), exitCode)
+	return windows.TerminateProcess(windows.Handle(cmd.Process.Handle()), exitCode)
 }
