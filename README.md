@@ -377,10 +377,6 @@ and write to disk before being killed.
 
 Contributions are welcome. Please [open an issue](https://github.com/SalzDevs/rein/issues/new) before sending a PR so we can discuss the approach. Run the test suite (`go test ./...`) before submitting.
 
-## Security
-
-For security issues, please email `security@salzdevs.com` instead of opening a public issue. See [SECURITY.md](SECURITY.md) for our policy.
-
 ## License
 
 MIT.
