@@ -3,11 +3,6 @@
 Thanks for your interest in contributing! rein is a small project
 and contributions of any size are welcome.
 
-## Code of conduct
-
-This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
-By participating, you are expected to uphold this code.
-
 ## How to contribute
 
 1. **Open an issue first.** For anything beyond a typo or
